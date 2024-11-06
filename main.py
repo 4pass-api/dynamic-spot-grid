@@ -61,7 +61,7 @@ def exit_after_timeout(timeout):
 
 
 def place_order(
-        ex: ccxt.Exchange,
+        exchange: ccxt.Exchange,
         symbol: str,
         side: str,
         amount: float,
@@ -69,7 +69,7 @@ def place_order(
         type: str = 'limit'
 ):
     try:
-        order_info = ex.create_order(symbol, type, side, amount, price)
+        order_info = exchange.create_order(symbol, type, side, amount, price)
         logger.info(f" {symbol}下單成功: {side}@{price if price else '市價'} x {amount}")
         return order_info
     except Exception as e:
