@@ -257,7 +257,7 @@ if __name__ == '__main__':
         last_sell_price = orders[-1].price
 
         if num_of_buy < max_orders:
-            logging.info(f"買單數量不足，補單")
+            logging.debug(f"買單數量不足，補單")
             for i in range(1, max_orders - num_of_buy + 1):
                 buy_price = last_buy_price - p * i
                 if p_lower < buy_price < p_upper:
@@ -265,13 +265,13 @@ if __name__ == '__main__':
                     if order_info:
                         orders.append(GridOrder.from_order_info(order_info))
         elif num_of_buy > max_orders:
-            logging.info(f"買單數量過多，取消多餘訂單")
+            logging.debug(f"買單數量過多，取消多餘訂單")
             for i in range(num_of_buy - max_orders):
                 orders[0].cancel_order(ex)
                 orders.pop(0)
 
         if num_of_sell < max_orders:
-            logging.info(f"賣單數量不足，補單")
+            logging.debug(f"賣單數量不足，補單")
             for i in range(1, max_orders - num_of_sell + 1):
                 sell_price = last_sell_price + p * i
                 if p_lower < sell_price < p_upper:
@@ -279,7 +279,7 @@ if __name__ == '__main__':
                     if order_info:
                         orders.append(GridOrder.from_order_info(order_info))
         elif num_of_sell > max_orders:
-            logging.info(f"賣單數量過多，取消多餘訂單")
+            logging.debug(f"賣單數量過多，取消多餘訂單")
             for i in range(num_of_sell - max_orders):
                 orders[-1].cancel_order(ex)
                 orders.pop(-1)
