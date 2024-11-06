@@ -1,11 +1,8 @@
-name: build multi-platform executables
+name: Build Multi-Platform Executables
+
 on:
-  push:
-    paths:
-      - "**.py"
-      - "requirements.txt"
-    branches:
-      - "main"
+  release:
+    types: [published]
 
 jobs:
   build:
@@ -22,8 +19,8 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # Version range or exact version of a Python version to use, using SemVer's version range syntax
-          architecture: 'x64' # optional x64 or x86. Defaults to x64 if not specified
+          python-version: '3.11'
+          architecture: 'x64'
           cache: 'pip'
           cache-dependency-path: |
             requirements*.txt
@@ -39,13 +36,15 @@ jobs:
           script-name: main.py
           onefile: true
 
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+      - name: Upload Artifacts to Release
+        uses: ncipollo/release-action@v1
         with:
-          name: ${{ runner.os }} Build
-          path: |
+          artifacts: |
             build/*.exe
             build/*.bin
             build/*.app/**/*
             settings.ini
-          include-hidden-files: true
+          include-source: false
+          token: ${{ secrets.GB_TOKEN }}
+          tag: ${{ github.event.release.tag_name }}
+          name: ${{ runner.os }} Build
