@@ -47,4 +47,5 @@ jobs:
             build/*.exe
             build/*.bin
             build/*.app/**/*
+            settings.ini
           include-hidden-files: true
