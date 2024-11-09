@@ -48,8 +48,8 @@ class GridOrder(BaseModel):
             return self
 
     def cancel_order(self, exchange: ccxt.Exchange):
-        exchange.cancel_order(self.id, self.symbol)
         logger.info(f"取消訂單: {self.id}, {self.side}@{self.price} x {self.amount}")
+        exchange.cancel_order(self.id, self.symbol)
 
 
 def exit_after_timeout(timeout):
@@ -170,6 +170,7 @@ if __name__ == '__main__':
     p = 0.0
     amount = 0.0
     max_orders = 0
+    patience = 1
     p_upper = -1e16
     p_lower = 1e16
 
@@ -201,6 +202,15 @@ if __name__ == '__main__':
             raise ValueError
     except ValueError:
         logger.error("最大交易次數錯誤")
+        exit_after_timeout(5)
+
+    try:
+        patience = int(config['STRATEGY_PARAMS']['PATIENCE'])
+        if patience < max_orders:
+            logger.error(f"耐心值應該大於最大交易次數: {max_orders}")
+            raise ValueError
+    except ValueError:
+        logger.error("耐心值錯誤")
         exit_after_timeout(5)
 
     try:
@@ -245,6 +255,7 @@ if __name__ == '__main__':
         if order_info:
             orders.append(GridOrder.from_order_info(order_info))
 
+    last_check_time = time.time()
     while True:
 
         last_price = ex.fetch_ticker(symbol)['last']
@@ -256,6 +267,28 @@ if __name__ == '__main__':
         last_buy_price = orders[0].price
         last_sell_price = orders[-1].price
 
+        # cancel orders if the number of orders is more than max_orders * 2
+        if time.time() - last_check_time > 10:
+            last_check_time = time.time()
+            cancel_waitlist = []
+            if num_of_buy > patience:
+                cancel_waitlist.extend(orders[:num_of_buy - max_orders])
+                orders = orders[num_of_buy - max_orders:]
+
+            if num_of_sell > patience:
+                cancel_waitlist.extend(orders[-(num_of_sell - max_orders):])
+                orders = orders[:-(num_of_sell - max_orders)]
+
+            if len(cancel_waitlist) > 0:
+                for order in cancel_waitlist:
+                    try:
+                        order.cancel_order(ex)
+                    except Exception as e:
+                        logger.error(f"取消訂單失敗: {e}, 檢查是否已成交")
+                        post_order = order.strategy_run(ex, p, p_upper, p_lower)
+                        if post_order:
+                            orders.append(post_order)
+
         if num_of_buy < max_orders:
             logging.debug(f"買單數量不足，補單")
             for i in range(1, max_orders - num_of_buy + 1):
@@ -264,11 +297,6 @@ if __name__ == '__main__':
                     order_info = place_order(ex, symbol, 'buy', amount, buy_price)
                     if order_info:
                         orders.append(GridOrder.from_order_info(order_info))
-        elif num_of_buy > max_orders:
-            logging.debug(f"買單數量過多，取消多餘訂單")
-            for i in range(num_of_buy - max_orders):
-                orders[0].cancel_order(ex)
-                orders.pop(0)
 
         if num_of_sell < max_orders:
             logging.debug(f"賣單數量不足，補單")
@@ -278,11 +306,6 @@ if __name__ == '__main__':
                     order_info = place_order(ex, symbol, 'sell', amount, sell_price)
                     if order_info:
                         orders.append(GridOrder.from_order_info(order_info))
-        elif num_of_sell > max_orders:
-            logging.debug(f"賣單數量過多，取消多餘訂單")
-            for i in range(num_of_sell - max_orders):
-                orders[-1].cancel_order(ex)
-                orders.pop(-1)
 
         orders = sorted(orders, key=lambda x: abs(x.price - last_price))
 
