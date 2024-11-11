@@ -4,6 +4,7 @@ import time
 from typing import Literal
 
 import ccxt
+from ccxt import InsufficientFunds
 from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO,
@@ -21,6 +22,7 @@ class GridOrder(BaseModel):
     side: Literal['buy', 'sell']
     amount: float
     price: float
+    error_tries: int = 0
 
     @staticmethod
     def from_order_info(order_info: dict):
@@ -32,13 +34,22 @@ class GridOrder(BaseModel):
             amount=order_info['amount']
         )
 
-    def strategy_run(self, exchange: ccxt.Exchange, price_diff: float, p_max: float, p_min: float):
-        order_info = exchange.fetch_order(self.id, self.symbol)
+    def strategy_run(self, exchange: ccxt.binance, price_diff: float, p_max: float, p_min: float):
+
+        try:
+            order_info = exchange.fetch_order(self.id, self.symbol)
+        except ccxt.OrderNotFound as e:
+            logger.error(f"訂單 {self.id} 不存在: {e}")
+            self.error_tries += 1
+            if self.error_tries > 3:
+                return None
+            return self
+
         if order_info['status'] == 'closed':
             logger.info(f"訂單 {self.id} 完成: {self.side}@{self.price} x {self.amount}")
             next_side = 'buy' if self.side == 'sell' else 'sell'
             next_price = self.price + price_diff if next_side == 'sell' else self.price - price_diff
-            if p_lower < next_price < p_upper:
+            if p_min < next_price < p_max:
                 new_order_info = place_order(exchange, self.symbol, next_side, self.amount, next_price)
                 return GridOrder.from_order_info(new_order_info)
             else:
@@ -47,7 +58,7 @@ class GridOrder(BaseModel):
         else:
             return self
 
-    def cancel_order(self, exchange: ccxt.Exchange):
+    def cancel_order(self, exchange: ccxt.binance):
         logger.info(f"取消訂單: {self.id}, {self.side}@{self.price} x {self.amount}")
         exchange.cancel_order(self.id, self.symbol)
 
@@ -61,23 +72,32 @@ def exit_after_timeout(timeout):
 
 
 def place_order(
-        exchange: ccxt.Exchange,
+        exchange: ccxt.binance,
         symbol: str,
-        side: str,
+        side: Literal['buy', 'sell'],
         amount: float,
         price: float | None = None,
-        type: str = 'limit'
+        type: Literal['limit', 'market'] = 'limit',
+        max_tries: int = 3
 ):
-    try:
-        order_info = exchange.create_order(symbol, type, side, amount, price)
-        logger.info(f" {symbol}下單成功: {side}@{price if price else '市價'} x {amount}")
-        return order_info
-    except Exception as e:
-        logger.error(f" {symbol}下單失敗: {e}")
-        return None
+    for i in range(max_tries):
+        try:
+            order_info = exchange.create_order(symbol, type, side, amount, price)
+            logger.info(f" {symbol}下單成功: {side}@{price if price else '市價'} x {amount}")
+            return order_info
+        except InsufficientFunds as e:
+            logger.error(f"餘額不足: {e}")
+        except ccxt.BaseError as e:
+            logger.error(f"下單失敗: {e}")
+        except Exception as e:
+            logger.error(f"其他錯誤: {e}")
+        time.sleep(1)
+        logger.info("等待 1 秒後重試")
+
+    exit_after_timeout(3)
 
 
-def get_balance(ex, _symbol):
+def get_balance(ex: ccxt.binance, _symbol):
     try:
         balance = ex.fetch_balance()
     except ccxt.AuthenticationError as e:
@@ -260,6 +280,32 @@ if __name__ == '__main__':
 
         last_price = ex.fetch_ticker(symbol)['last']
 
+        orders = sorted(orders, key=lambda x: x.price)
+        num_of_buy = len([order for order in orders if order.side == 'buy'])
+        num_of_sell = len(orders) - num_of_buy
+
+        new_orders = []
+        for i in range(2, num_of_buy):
+            # check the price difference of adjacent buy orders, if it is greater than p, place a new order
+            assert orders[num_of_buy - i].side == 'buy' and orders[num_of_buy - i + 1].side == 'buy'
+            if orders[num_of_buy - i].price - orders[num_of_buy - i + 1].price > 1.2 * p:
+                buy_price = orders[num_of_buy - i + 1].price - p
+                if p_lower < buy_price < p_upper:
+                    order_info = place_order(ex, symbol, 'buy', amount, buy_price)
+                    if order_info:
+                        new_orders.append(GridOrder.from_order_info(order_info))
+
+        for i in range(num_of_sell - 2):
+            # check the price difference of adjacent sell orders, if it is greater than p, place a new order
+            assert orders[num_of_buy + i].side == 'sell' and orders[num_of_buy + i + 1].side == 'sell'
+            if orders[num_of_buy + i + 1].price - orders[num_of_buy + i].price > 1.2 * p:
+                sell_price = orders[num_of_buy + i].price + p
+                if p_lower < sell_price < p_upper:
+                    order_info = place_order(ex, symbol, 'sell', amount, sell_price)
+                    if order_info:
+                        new_orders.append(GridOrder.from_order_info(order_info))
+
+        orders.extend(new_orders)
         orders = sorted(orders, key=lambda x: x.price)
         num_of_buy = len([order for order in orders if order.side == 'buy'])
         num_of_sell = len(orders) - num_of_buy
