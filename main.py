@@ -97,9 +97,9 @@ def place_order(
     exit_after_timeout(3)
 
 
-def get_balance(ex: ccxt.binance, _symbol):
+def get_balance(exchange: ccxt.binance, _symbol):
     try:
-        balance = ex.fetch_balance()
+        balance = exchange.fetch_balance()
     except ccxt.AuthenticationError as e:
         logger.error(f"API 錯誤: {e}")
         exit_after_timeout(5)
@@ -174,7 +174,7 @@ if __name__ == '__main__':
 
     fdusd_balance, tgt_balance, tgt_fdusd_value = get_balance(ex, _symbol)
 
-    if abs(tgt_fdusd_value - fdusd_balance) / min(tgt_fdusd_value, fdusd_balance) < 0.1:
+    if abs(tgt_fdusd_value - fdusd_balance) / max(1, min(tgt_fdusd_value, fdusd_balance)) < 0.1:
         logger.info(f"{_symbol} 和 FDUSD 餘額相近，不需要調整")
     else:
         logger.info(f"{_symbol} 和 FDUSD 餘額差異過大，將自動調整")
