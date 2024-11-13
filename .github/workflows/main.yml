@@ -8,7 +8,7 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        os: [windows-latest]
 
     runs-on: ${{ matrix.os }}
 
@@ -44,7 +44,7 @@ jobs:
             build/*.bin
             build/*.app/**/*
             settings.ini
-          include-source: false
           token: ${{ secrets.GB_TOKEN }}
           tag: ${{ github.event.release.tag_name }}
           name: ${{ runner.os }} Build
+          allowUpdates: true
