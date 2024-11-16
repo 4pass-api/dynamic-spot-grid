@@ -34,6 +34,10 @@ class GridOrder(BaseModel):
             amount=order_info['amount']
         )
 
+    @property
+    def next_side(self) -> Literal['buy', 'sell']:
+        return 'buy' if self.side == 'sell' else 'sell'
+
     def strategy_run(self, exchange: ccxt.binance, price_diff: float, p_max: float, p_min: float):
 
         try:
@@ -48,17 +52,18 @@ class GridOrder(BaseModel):
         if order_info['status'] == 'closed':
 
             # calculate fee
-            order_fee = order_info['fee']
-            logger.info(f"訂單 {self.id} 手續費: {order_fee}")
+            # order_fee = order_info['fee']
+            # logger.info(f"訂單 {self.id} 手續費: {order_fee}")
 
             logger.info(f"訂單 {self.id} 完成: {self.side}@{self.price:.4f} x {self.amount:.4f}")
-            next_side = 'buy' if self.side == 'sell' else 'sell'
+            next_side = self.next_side
             next_price = self.price + price_diff if next_side == 'sell' else self.price - price_diff
+
             if p_min < next_price < p_max:
                 new_order_info = place_order(exchange, self.symbol, next_side, self.amount, next_price)
                 return GridOrder.from_order_info(new_order_info)
             else:
-                logging.info(f"價格 {next_price} 超出範圍，不下單")
+                logging.info(f"價格 {next_price:.4f} 超出範圍，不下單")
                 return None
         else:
             return self
@@ -296,7 +301,7 @@ if __name__ == '__main__':
         new_buy_orders = []
         for i in range(len(buy_orders) - 1):
             if buy_orders[i].price - buy_orders[i + 1].price > 1.2 * p:
-                buy_price = buy_orders[i].price - p
+                buy_price = (buy_orders[i].price + buy_orders[i + 1].price) / 2
                 if p_lower < buy_price < p_upper:
                     order_info = place_order(ex, symbol, 'buy', amount, buy_price)
                     if order_info:
@@ -305,7 +310,7 @@ if __name__ == '__main__':
         new_sell_orders = []
         for i in range(len(sell_orders) - 1):
             if sell_orders[i + 1].price - sell_orders[i].price > 1.2 * p:
-                sell_price = sell_orders[i].price + p
+                sell_price = (sell_orders[i + 1].price + sell_orders[i].price) / 2
                 if p_lower < sell_price < p_upper:
                     order_info = place_order(ex, symbol, 'sell', amount, sell_price)
                     if order_info:
@@ -320,21 +325,23 @@ if __name__ == '__main__':
         closest_buy = buy_orders[0].price
         closest_sell = sell_orders[0].price
 
-        if closest_sell - closest_buy > 2.2 * p:
-            if abs(closest_sell - last_price) < abs(closest_buy - last_price):
-                # place buy order
-                buy_price = closest_sell - p
-                if p_lower < buy_price < p_upper:
-                    order_info = place_order(ex, symbol, 'buy', amount, buy_price)
-                    if order_info:
-                        buy_orders.append(GridOrder.from_order_info(order_info))
-            else:
-                # place sell order
-                sell_price = closest_buy + p
-                if p_lower < sell_price < p_upper:
-                    order_info = place_order(ex, symbol, 'sell', amount, sell_price)
-                    if order_info:
-                        sell_orders.append(GridOrder.from_order_info(order_info))
+        logger.info(f"最近買價: {closest_buy:.4f}, 最近賣價: {closest_sell:.4f}, 最後成交價: {last_price:.4f}")
+
+        # if closest_sell - closest_buy > 2.2 * p:
+        #     if abs(closest_sell - last_price) < abs(closest_buy - last_price):
+        #         # place buy order
+        #         buy_price = closest_sell - p
+        #         if p_lower < buy_price < p_upper:
+        #             order_info = place_order(ex, symbol, 'buy', amount, buy_price)
+        #             if order_info:
+        #                 buy_orders.append(GridOrder.from_order_info(order_info))
+        #     else:
+        #         # place sell order
+        #         sell_price = closest_buy + p
+        #         if p_lower < sell_price < p_upper:
+        #             order_info = place_order(ex, symbol, 'sell', amount, sell_price)
+        #             if order_info:
+        #                 sell_orders.append(GridOrder.from_order_info(order_info))
 
         orders = buy_orders + sell_orders
 
