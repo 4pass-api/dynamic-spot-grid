@@ -6,6 +6,7 @@ from typing import Literal
 import ccxt
 from ccxt import InsufficientFunds
 from pydantic import BaseModel
+from typing_extensions import Self
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -38,7 +39,7 @@ class GridOrder(BaseModel):
     def next_side(self) -> Literal['buy', 'sell']:
         return 'buy' if self.side == 'sell' else 'sell'
 
-    def strategy_run(self, exchange: ccxt.binance, price_diff: float, p_max: float, p_min: float):
+    def strategy_run(self, exchange: ccxt.binance, price_diff: float, p_max: float, p_min: float) -> Self | None:
 
         try:
             order_info = exchange.fetch_order(self.id, self.symbol)
@@ -50,10 +51,6 @@ class GridOrder(BaseModel):
             return self
 
         if order_info['status'] == 'closed':
-
-            # calculate fee
-            # order_fee = order_info['fee']
-            # logger.info(f"訂單 {self.id} 手續費: {order_fee}")
 
             logger.info(f"訂單 {self.id} 完成: {self.side}@{self.price:.4f} x {self.amount:.4f}")
             next_side = self.next_side
@@ -236,7 +233,7 @@ if __name__ == '__main__':
 
     try:
         patience = int(config['STRATEGY_PARAMS']['PATIENCE'])
-        if patience < max_orders:
+        if patience <= max_orders:
             logger.error(f"耐心值應該大於最大交易次數: {max_orders}")
             raise ValueError
     except ValueError:
@@ -290,79 +287,38 @@ if __name__ == '__main__':
 
         last_price = ex.fetch_ticker(symbol)['last']
 
-        orders = sorted(orders, key=lambda x: x.price)
+        buy_orders = []
+        sell_orders = []
+        for order in orders:
+            if order.side == 'buy':
+                buy_orders.append(order)
+            else:
+                sell_orders.append(order)
 
-        buy_orders = [order for order in orders if order.side == 'buy']
-        sell_orders = [order for order in orders if order.side == 'sell']
-
+        # buy orders, ordered by price, from high to low
         buy_orders = sorted(buy_orders, key=lambda x: x.price, reverse=True)
+
+        # sell orders, ordered by price, from low to high
         sell_orders = sorted(sell_orders, key=lambda x: x.price)
 
-        new_buy_orders = []
-        for i in range(len(buy_orders) - 1):
-            if buy_orders[i].price - buy_orders[i + 1].price > 1.2 * p:
-                buy_price = (buy_orders[i].price + buy_orders[i + 1].price) / 2
-                if p_lower < buy_price < p_upper:
-                    order_info = place_order(ex, symbol, 'buy', amount, buy_price)
-                    if order_info:
-                        new_buy_orders.append(GridOrder.from_order_info(order_info))
+        num_of_buy = len(buy_orders)
+        num_of_sell = len(sell_orders)
 
-        new_sell_orders = []
-        for i in range(len(sell_orders) - 1):
-            if sell_orders[i + 1].price - sell_orders[i].price > 1.2 * p:
-                sell_price = (sell_orders[i + 1].price + sell_orders[i].price) / 2
-                if p_lower < sell_price < p_upper:
-                    order_info = place_order(ex, symbol, 'sell', amount, sell_price)
-                    if order_info:
-                        new_sell_orders.append(GridOrder.from_order_info(order_info))
+        new_orders = []
 
-        buy_orders.extend(new_buy_orders)
-        sell_orders.extend(new_sell_orders)
-
-        buy_orders = sorted(buy_orders, key=lambda x: x.price, reverse=True)
-        sell_orders = sorted(sell_orders, key=lambda x: x.price)
-
-        closest_buy = buy_orders[0].price
-        closest_sell = sell_orders[0].price
-
-        logger.info(f"最近買價: {closest_buy:.4f}, 最近賣價: {closest_sell:.4f}, 最後成交價: {last_price:.4f}")
-
-        # if closest_sell - closest_buy > 2.2 * p:
-        #     if abs(closest_sell - last_price) < abs(closest_buy - last_price):
-        #         # place buy order
-        #         buy_price = closest_sell - p
-        #         if p_lower < buy_price < p_upper:
-        #             order_info = place_order(ex, symbol, 'buy', amount, buy_price)
-        #             if order_info:
-        #                 buy_orders.append(GridOrder.from_order_info(order_info))
-        #     else:
-        #         # place sell order
-        #         sell_price = closest_buy + p
-        #         if p_lower < sell_price < p_upper:
-        #             order_info = place_order(ex, symbol, 'sell', amount, sell_price)
-        #             if order_info:
-        #                 sell_orders.append(GridOrder.from_order_info(order_info))
-
-        orders = buy_orders + sell_orders
-
-        orders = sorted(orders, key=lambda x: x.price)
-        num_of_buy = len([order for order in orders if order.side == 'buy'])
-        num_of_sell = len(orders) - num_of_buy
-
-        last_buy_price = orders[0].price
-        last_sell_price = orders[-1].price
-
-        # cancel orders if the number of orders is more than max_orders * 2
+        # cancel orders if the number of orders is more than `patience`
         if time.time() - last_check_time > 10:
             last_check_time = time.time()
             cancel_waitlist = []
             if num_of_buy > patience:
-                cancel_waitlist.extend(orders[:num_of_buy - max_orders])
-                orders = orders[num_of_buy - max_orders:]
+                # cancel the orders that are far from the current price, from buy_orders
+                cancel_waitlist.extend(buy_orders[-(num_of_buy - patience):])
+                buy_orders = buy_orders[:-(num_of_buy - patience)]
 
             if num_of_sell > patience:
-                cancel_waitlist.extend(orders[-(num_of_sell - max_orders):])
-                orders = orders[:-(num_of_sell - max_orders)]
+                # cancel the orders that are far from the current price, from sell_orders
+                cancel_waitlist.extend(sell_orders[-(num_of_sell - patience):])
+                sell_orders = sell_orders[:-(num_of_sell - patience)]
 
             if len(cancel_waitlist) > 0:
                 for order in cancel_waitlist:
@@ -372,33 +328,49 @@ if __name__ == '__main__':
                         logger.error(f"取消訂單失敗: {e}, 檢查是否已成交")
                         post_order = order.strategy_run(ex, p, p_upper, p_lower)
                         if post_order:
-                            orders.append(post_order)
+                            new_orders.append(post_order)
 
-        if num_of_buy < max_orders:
-            logging.debug(f"買單數量不足，補單")
-            for i in range(1, max_orders - num_of_buy + 1):
-                buy_price = last_buy_price - p * i
-                if p_lower < buy_price < p_upper:
-                    order_info = place_order(ex, symbol, 'buy', amount, buy_price)
-                    if order_info:
-                        orders.append(GridOrder.from_order_info(order_info))
+        else:
 
-        if num_of_sell < max_orders:
-            logging.debug(f"賣單數量不足，補單")
-            for i in range(1, max_orders - num_of_sell + 1):
-                sell_price = last_sell_price + p * i
-                if p_lower < sell_price < p_upper:
-                    order_info = place_order(ex, symbol, 'sell', amount, sell_price)
-                    if order_info:
-                        orders.append(GridOrder.from_order_info(order_info))
+            last_buy_price = buy_orders[-1].price
+            last_sell_price = sell_orders[-1].price
 
-        orders = sorted(orders, key=lambda x: abs(x.price - last_price))
+            if num_of_buy < max_orders:
+                logging.debug(f"買單數量不足，補單")
+                for i in range(1, max_orders - num_of_buy + 1):
+                    buy_price = last_buy_price - p * i
+                    if p_lower < buy_price < p_upper:
+                        order_info = place_order(ex, symbol, 'buy', amount, buy_price)
+                        if order_info:
+                            new_orders.append(GridOrder.from_order_info(order_info))
 
-        new_orders = []
-        for order in orders:
-            new_order = order.strategy_run(ex, p, p_upper, p_lower)
-            if new_order:
-                new_orders.append(new_order)
+            if num_of_sell < max_orders:
+                logging.debug(f"賣單數量不足，補單")
+                for i in range(1, max_orders - num_of_sell + 1):
+                    sell_price = last_sell_price + p * i
+                    if p_lower < sell_price < p_upper:
+                        order_info = place_order(ex, symbol, 'sell', amount, sell_price)
+                        if order_info:
+                            new_orders.append(GridOrder.from_order_info(order_info))
+
+        tag = 1
+        while len(buy_orders) + len(sell_orders) > 0:
+            if tag > 0:
+                order = buy_orders.pop(0)
+                new_order = order.strategy_run(ex, p, p_upper, p_lower)
+                if new_order:
+                    new_orders.append(order)
+
+                if len(sell_orders) > 0:
+                    tag = -1
+            else:
+                order = sell_orders.pop(0)
+                new_order = order.strategy_run(ex, p, p_upper, p_lower)
+                if new_order:
+                    new_orders.append(order)
+
+                if len(buy_orders) > 0:
+                    tag = 1
 
         orders = new_orders
         time.sleep(1)
