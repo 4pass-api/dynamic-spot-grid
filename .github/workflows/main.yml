@@ -35,6 +35,7 @@ jobs:
           nuitka-version: main
           script-name: main.py
           onefile: true
+          mode: standalone
 
       - name: Upload Artifacts to Release
         uses: ncipollo/release-action@v1
