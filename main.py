@@ -264,7 +264,8 @@ if __name__ == '__main__':
 
     # summarize the strategy parameters
     logger.info(
-        f"價格差: {p}, 單位交易量: {amount}, 單邊掛單數: {max_orders}, 價格區間上限: {p_upper}, 價格區間下限: {p_lower}")
+        f"價格差: {p}, 單位交易量: {amount}, 單邊掛單數: {max_orders}, 價格區間上限: {p_upper}, 價格區間下限: {p_lower}"
+    )
 
     last_price = ex.fetch_ticker(symbol)['last']
 
@@ -308,6 +309,7 @@ if __name__ == '__main__':
 
         # cancel orders if the number of orders is more than `patience`
         if time.time() - last_check_time > 10:
+            # pass
             last_check_time = time.time()
             cancel_waitlist = []
             if num_of_buy > patience:
@@ -359,7 +361,7 @@ if __name__ == '__main__':
                 order = buy_orders.pop(0)
                 new_order = order.strategy_run(ex, p, p_upper, p_lower)
                 if new_order:
-                    new_orders.append(order)
+                    new_orders.append(new_order)
 
                 if len(sell_orders) > 0:
                     tag = -1
@@ -367,7 +369,7 @@ if __name__ == '__main__':
                 order = sell_orders.pop(0)
                 new_order = order.strategy_run(ex, p, p_upper, p_lower)
                 if new_order:
-                    new_orders.append(order)
+                    new_orders.append(new_order)
 
                 if len(buy_orders) > 0:
                     tag = 1
